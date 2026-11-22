@@ -314,3 +314,13 @@ div.opener { cursor: default; }
   .faq-item summary { min-height: 44px; padding: 10px 12px; }
 }
 #main-content:focus { outline: none; }
+
+/* live mode */
+.turnstile-box { position: fixed; inset: auto 16px 24px 16px; max-width: 360px; margin: 0 auto; background: var(--white, #fff); border-radius: 16px; padding: 14px 16px; box-shadow: 0 8px 32px rgba(105,69,91,.25); z-index: 50; }
+.status-row { display: flex; gap: 8px; align-items: center; font-size: 14px; line-height: 20px; margin: 0; }
+.status-row .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange, #F6AA62); flex: none; }
+.status-row.ok .dot { background: #3C8D5A; }
+.switch-row { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 20px; }
+.switch-row input { width: 22px; height: 22px; margin-top: 1px; flex: none; accent-color: #69455B; }
+.door-card { border: 2px dashed var(--plum-muted, #7D5A6E); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
+.link-box { word-break: break-all; font-size: 13px; background: var(--yellow-tint, #FFEBBE); border-radius: 10px; padding: 8px 10px; margin: 0; }

@@ -1,4 +1,4 @@
-import { site, stats, gapOptions, placeOptions, openers, stages, formats, ideas, times, faq, faqCats } from './content.js';
+import { site, stats, gapOptions, placeOptions, openers, stages, formats, ideas, times, faq, faqCats, door } from './content.js';
 import { store, MODE } from './store.js';
 import { renderPhotostrip } from './photostrip.js';
 
@@ -16,7 +16,45 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const $ = (sel, root = view) => root.querySelector(sel);
 const $$ = (sel, root = view) => [...root.querySelectorAll(sel)];
 const go = (hash) => { location.hash = hash; };
-const linkTo = (id) => `${location.origin}${location.pathname}#/s/${id}/friend`;
+const LIVE = MODE === 'live';
+const linkTo = (id) => (LIVE ? store.friendLink(id) || '' : `${location.origin}${location.pathname}#/s/${id}/friend`);
+const roleOf = (s) => s.role || 'owner';
+// Stage 3 is asymmetric: the owner proposes a plan, the friend replies.
+const planOf = (s) => (roleOf(s) === 'friend' ? s.turns.next?.friend : s.turns.next?.me);
+const replyOf = (s) => (roleOf(s) === 'friend' ? s.turns.next?.me : s.turns.next?.friend);
+const saveError = (e) => (LIVE
+  ? (e?.code === 'upload_failed' ? 'The photo didn’t upload. Check your connection or try a smaller photo.' : 'Couldn’t save that. Check your connection and try again.')
+  : 'Your browser’s storage is full. Try a smaller photo.');
+
+// Where this person should be on this strip, from the data (works for both roles).
+function routeOf(s) {
+  const role = roleOf(s), t = s.turns;
+  const mine = (k) => t[k]?.me, theirs = (k) => t[k]?.friend;
+  if (s.stage === 'done') return 'done';
+  if (s.stage === 'meetup') return 'meetup';
+  if (role === 'owner' && s.stage === 'invite') return 'invite';
+  if (role === 'friend' && !mine('now') && !mine('then') && !mine('next')) return 'friend';
+  for (const k of ['now', 'then']) {
+    if (!mine(k)) return `stage/${k}`;
+    if (!theirs(k)) return `wait/${k}`;
+  }
+  return mine('next') ? 'wait/next' : 'stage/next';
+}
+const ROUTE_LABEL = { invite: 'Invite not sent yet', friend: 'New from a friend', 'stage/now': 'Stage 1', 'wait/now': 'Stage 1', 'stage/then': 'Stage 2', 'wait/then': 'Stage 2', 'stage/next': 'Stage 3', 'wait/next': 'Stage 3', meetup: 'Waiting for your meet-up photo', done: 'Done' };
+
+function showError(e, retry) {
+  const code = e?.code || e?.message || '';
+  let msg = 'Something went wrong on our side. Try again in a moment.';
+  if (/turnstile/.test(code)) msg = 'The quick “are you a person” check didn’t load. Turn off any content blocker, or try another browser, then try again.';
+  else if (/rate_limited/.test(code)) msg = 'That’s a lot of new photostrips in a day. Try again tomorrow.';
+  else if (/Failed to fetch|NetworkError|Load failed/i.test(String(e?.message))) msg = 'We couldn’t reach the server. Check your connection and try again.';
+  shell({
+    title: 'photostrip', back: '#/',
+    body: `<h1 class="heading">that didn’t work</h1><p class="muted" style="margin:0">${esc(msg)}</p>${tip('ovr', 'your photostrip is safe. nothing was lost.')}`,
+    actions: `<button class="btn btn-primary" id="retry">Try again</button><a class="btn btn-tertiary" href="#/">Back to home</a>`,
+  });
+  $('#retry').addEventListener('click', retry || (() => render()));
+}
 
 const icon = {
   back: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 18-6-6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -96,7 +134,7 @@ async function getStripOr404(id) {
     shell({
       title: 'photostrip', back: '#/',
       body: `<h1 class="heading">we couldn’t find this photostrip</h1>
-        <p class="muted" style="margin:0">This is a demo, so photostrips only live on the phone or laptop that made them. In the real version, this link would open the shared strip on any phone.</p>
+        <p class="muted" style="margin:0">${LIVE ? 'This photostrip isn’t linked to this browser. Open the link your friend sent you, or the return link you copied, in this browser.' : 'This is a demo, so photostrips only live on the phone or laptop that made them. In the real version, this link would open the shared strip on any phone.'}</p>
         ${tip('ovr', 'no stress. you can start a new one in a minute.')}`,
       actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>`,
     });
@@ -106,7 +144,7 @@ async function getStripOr404(id) {
 
 /* ---------------- 01 landing ---------------- */
 async function landing() {
-  const strips = await store.listStrips();
+  const strips = await store.listStrips().catch(() => []);
   const open = strips.find((s) => s.stage !== 'done');
   const resumeRow = open
     ? `<a class="list-row" href="#/s/${open.id}">Continue your photostrip with ${esc(open.friendName)} ${icon.chevron}</a>`
@@ -165,9 +203,18 @@ async function start() {
     const myName = String(f.get('me') || '').trim();
     try { localStorage.setItem('reconnect.me', myName); } catch {}
     sessionStorage.removeItem('reconnect.prefill');
-    const s = await store.createStrip({ friendName, gap: f.get('gap'), place: f.get('place') });
-    await store.updateStrip(s.id, { myName });
-    go(`#/s/${s.id}/invite`);
+    const btn = $('.actions .btn-primary');
+    btn.disabled = true;
+    btn.textContent = 'Setting up…';
+    try {
+      const s = await store.createStrip({ friendName, myName, gap: f.get('gap'), place: f.get('place') });
+      go(`#/s/${s.id}/invite`);
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false;
+      btn.textContent = 'Next';
+      showError(err, () => start());
+    }
   });
 }
 
@@ -211,7 +258,9 @@ async function invite(id) {
   draw();
   const message = () => texts[sel].trim();
   const full = () => `${message()}\n${linkTo(id)}`;
+  if (LIVE && !linkTo(id)) { toast('This browser can’t find your link. Start a new photostrip.'); }
   const done = async () => {
+    store.logEvent?.('invite_shared', id);
     sessionStorage.removeItem('reconnect.opener');
     await store.updateStrip(id, { opener: message(), stage: s.stage === 'invite' ? 'now' : s.stage });
     go(`#/s/${id}/sent`);
@@ -249,9 +298,16 @@ async function sent(id) {
         <figure class="polaroid tilt-l" style="margin:0"><div class="ph empty">+</div><figcaption>now</figcaption></figure>
         <figure class="polaroid" style="margin:0"><div class="ph empty">+</div><figcaption>then</figcaption></figure>
         <figure class="polaroid tilt-r" style="margin:0"><div class="ph empty">+</div><figcaption>next</figcaption></figure></div>
-      ${MODE === 'demo' ? `<p class="notice">Demo: ${esc(s.friendName)}’s side is simulated. Tap “preview” to see what the link opens for them.</p>` : ''}`,
+      ${LIVE
+        ? `<p class="status-row ${s.friendClaimed ? 'ok' : ''}"><span class="dot"></span>${s.friendClaimed ? `${esc(s.friendName)} opened your link.` : `${esc(s.friendName)} hasn’t opened the link yet.`}</p>`
+        : `<p class="notice">Demo: ${esc(s.friendName)}’s side is simulated. Tap “preview” to see what the link opens for them.</p>`}`,
     actions: `<a class="btn btn-primary" href="#/s/${id}/stage/now">Add the first frame</a>
-      <a class="btn btn-tertiary" href="#/s/${id}/friend">Preview what ${esc(s.friendName)} sees</a>`,
+      ${LIVE
+        ? `<button class="btn btn-tertiary" id="copy-link" type="button">Copy the link again</button>`
+        : `<a class="btn btn-tertiary" href="#/s/${id}/friend">Preview what ${esc(s.friendName)} sees</a>`}`,
+  });
+  $('#copy-link')?.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(linkTo(id)); toast('Link copied.'); } catch { toast('Couldn’t copy. Open the invite screen to share it again.'); }
   });
 }
 
@@ -259,40 +315,57 @@ async function sent(id) {
 async function friendView(id) {
   const s = await getStripOr404(id);
   if (!s) return;
-  const sender = s.myName || 'An old friend';
-  const nowMe = s.turns.now?.me;
+  const asFriend = roleOf(s) === 'friend';
+  // The sender is the other person when I'm the friend; in the owner's preview it's me.
+  const sender = (asFriend ? s.friendName : s.myName) || 'An old friend';
+  const sentFrame = asFriend ? s.turns.now?.friend : s.turns.now?.me;
+  const note = s.opener || (asFriend ? '' : openers(s)[0].text);
   shell({
     docTitle: `${sender} wants to reconnect`,
-    body: `${MODE === 'demo' ? `<p class="notice">Preview: what ${esc(s.friendName)} sees after tapping your link.</p>` : ''}
+    body: `${!asFriend && !LIVE ? `<p class="notice">Preview: what ${esc(s.friendName)} sees after tapping your link.</p>` : ''}
       <div class="card" style="display:flex;gap:10px;align-items:center;box-shadow:var(--shadow)">
         <img src="${ASSETS.logo}" alt="" width="36" height="27">
-        <div><p class="caption">${esc(sender)} sent you</p><p class="small" style="margin:0">${esc(s.opener || openers(s)[0].text)}</p></div></div>
+        <div><p class="caption">${esc(sender)} sent you</p><p class="small" style="margin:0">${esc(note || 'a photostrip to pick up where you left off')}</p></div></div>
       <h1 class="display">${esc(sender)} wants to pick up where you left off.</h1>
       <div class="polaroids" aria-hidden="true">
-        <figure class="polaroid tilt-l" style="margin:0"><div class="ph ${nowMe ? '' : 'empty'}">${nowMe?.photo ? `<img src="${nowMe.photo}" alt="">` : nowMe ? '' : '+'}</div><figcaption>now${nowMe ? ' · ' + esc(sender) : ''}</figcaption></figure>
+        <figure class="polaroid tilt-l" style="margin:0"><div class="ph ${sentFrame ? '' : 'empty'}">${sentFrame?.photo ? `<img src="${sentFrame.photo}" alt="">` : sentFrame ? '' : '+'}</div><figcaption>now${sentFrame ? ' · ' + esc(sender) : ''}</figcaption></figure>
         <figure class="polaroid" style="margin:0"><div class="ph empty">+</div><figcaption>then</figcaption></figure>
         <figure class="polaroid tilt-r" style="margin:0"><div class="ph empty">+</div><figcaption>next</figcaption></figure></div>
-      ${tip('enc', 'they started a photostrip for you two. just add one thing back.')}`,
+      ${asFriend ? `<div class="field"><label class="label" for="my-name">Your name on the strip</label>
+        <input class="input" id="my-name" maxlength="30" autocomplete="given-name" value="${esc(s.myName || '')}"></div>
+        <p class="small muted" style="margin:0">Only you two can see this strip. You can delete it any time from <a href="#/about">About</a>.</p>`
+        : tip('enc', 'they started a photostrip for you two. just add one thing back.')}`,
     actions: `<button class="btn btn-primary" id="add-part" type="button">Add my part</button>
-      <a class="btn btn-tertiary" href="#/s/${id}">${MODE === 'demo' ? 'Back to my side (demo)' : 'Maybe later (they won’t be told)'}</a>`,
+      <a class="btn btn-tertiary" href="${asFriend ? '#/' : `#/s/${id}`}">${asFriend ? 'Maybe later (they won’t be told)' : 'Back to my side (demo)'}</a>`,
   });
-  $('#add-part').addEventListener('click', () => toast(MODE === 'demo' ? `Demo: ${s.friendName}’s side is simulated. Head back to continue as you.` : 'Opening…'));
+  $('#add-part').addEventListener('click', async () => {
+    if (!asFriend) return toast(`Demo: ${s.friendName}’s side is simulated. Head back to continue as you.`);
+    const name = $('#my-name').value.trim();
+    try {
+      if (name && name !== s.myName) await store.updateStrip(id, { myName: name });
+      go(`#/s/${id}/stage/now`);
+    } catch (e) { toast(saveError(e)); }
+  });
 }
 
 /* ---------------- 05 / 07 stage 1 & 2 ---------------- */
-async function stageView(id, key) {
+async function stageView(id, key, signal) {
   const s = await getStripOr404(id);
   if (!s) return;
-  if (key === 'next') return nextStage(s);
+  if (key === 'next') return nextStage(s, signal);
   const st = stages[key];
   const prevKey = ORDER[ORDER.indexOf(key) - 1];
   const mine = s.turns[key]?.me || {};
   let photo = mine.photo || null;
+  const theyAdded = !!s.turns[key]?.friend;
+  const lead = theyAdded
+    ? `${esc(s.friendName)} already added theirs. Now add yours.`
+    : key === 'now' ? (roleOf(s) === 'friend' ? 'Add your frame.' : `You add the first frame. ${esc(s.friendName)} adds theirs next.`) : 'Your turn to start this one.';
   shell({
-    title: `stage ${st.n} · ${st.label}`, back: prevKey ? `#/s/${id}/wait/${prevKey}` : `#/s/${id}/sent`,
+    title: `stage ${st.n} · ${st.label}`, back: prevKey ? `#/s/${id}/wait/${prevKey}` : (roleOf(s) === 'friend' ? `#/s/${id}/friend` : `#/s/${id}/sent`),
     body: `${progress(key)}
       <div class="stack-sm" style="gap:2px"><h1 class="heading">${esc(st.title)}</h1>
-      <p class="body muted" style="margin:0">${key === 'now' ? `You add the first frame. ${esc(s.friendName)} adds theirs next.` : 'Your turn to start this one.'}</p></div>
+      <p class="body muted" style="margin:0">${lead}</p></div>
       <form id="turn" class="card card-yellow stack-sm" style="gap:10px" novalidate>
         <label class="subheading" for="answer">${esc(st.question)}</label>
         <fieldset class="chips scroll" aria-label="How do you want to answer?">${formats.map((f) => `<label class="chip"><input type="radio" name="format" value="${f.id}" ${(mine.format || 'text') === f.id ? 'checked' : ''}><span>${f.label}</span></label>`).join('')}</fieldset>
@@ -345,6 +418,7 @@ async function stageView(id, key) {
   $('#turn').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (submit.disabled) return;
+    submit.disabled = true;
     const format = $('input[name=format]:checked')?.value || 'text';
     try {
       await store.saveTurn(id, key, 'me', {
@@ -354,10 +428,12 @@ async function stageView(id, key) {
         askBack: $('#askback').getAttribute('aria-pressed') === 'true' ? st.askBack : '',
         note: $('#note-toggle')?.getAttribute('aria-pressed') === 'true',
       });
-      await store.updateStrip(id, { stage: key });
+      if (roleOf(s) !== 'friend') await store.updateStrip(id, { stage: key });
       go(`#/s/${id}/wait/${key}`);
-    } catch {
-      toast('Your browser’s storage is full. Try a smaller photo.');
+    } catch (e) {
+      console.error(e);
+      submit.disabled = false;
+      toast(saveError(e));
     }
   });
 }
@@ -371,7 +447,45 @@ function rankIdeas(s) {
   return [...top, ideas.find((i) => i.tag === 'Online')];
 }
 
-async function nextStage(s) {
+async function replyStage(s, signal) {
+  const id = s.id, them = s.friendName, plan = planOf(s);
+  if (!plan) {
+    shell({
+      title: 'stage 3 · next', back: `#/s/${id}/wait/then`,
+      body: `${progress('next')}
+        <div class="stack-sm" style="gap:2px"><h1 class="heading">${esc(them)} is picking a plan</h1>
+        <p class="body muted" style="margin:0">They’ll suggest something based on what you both added. It shows up here when it’s ready.</p></div>
+        <div class="polaroids" aria-hidden="true"><figure class="polaroid tilt-r" style="margin:0"><div class="ph waiting"><span class="dots"><i></i><i></i><i></i></span></div><figcaption>${esc(them)}…</figcaption></figure></div>
+        ${tip('ovr', 'no rush. replies can take a day or two.')}`,
+      actions: `<button class="btn btn-primary" id="refresh" type="button">Check again</button><a class="btn btn-tertiary" href="#/">Back to home</a>`,
+    });
+    $('#refresh').addEventListener('click', () => render());
+    try {
+      await store.waitForFriend(id, 'next', { signal });
+      if (location.hash.endsWith('/stage/next')) render();
+    } catch { /* navigated away */ }
+    return;
+  }
+  shell({
+    title: 'stage 3 · next', back: `#/s/${id}/wait/then`,
+    body: `${progress('next')}
+      <div class="stack-sm" style="gap:2px"><h1 class="display">${esc(them)} has a plan</h1>
+      <p class="body muted" style="margin:0">Say yes if it works. You can sort out the details in your own chat.</p></div>
+      <div class="frames">${frame({ who: them, stage: 'next', plan: { idea: plan.idea, time: plan.time }, isNew: true })}</div>`,
+    actions: `<button class="btn btn-primary" id="yes" type="button">I’m in!</button><button class="btn btn-tertiary" id="no" type="button">Not this time</button>`,
+  });
+  const reply = async (accepted) => {
+    try {
+      await store.saveTurn(id, 'next', 'me', { text: accepted ? 'I’m in!' : 'Maybe another time', accepted });
+      go(`#/s/${id}/wait/next`);
+    } catch (e) { toast(saveError(e)); }
+  };
+  $('#yes').addEventListener('click', () => reply(true));
+  $('#no').addEventListener('click', () => reply(false));
+}
+
+async function nextStage(s, signal) {
+  if (roleOf(s) === 'friend') return replyStage(s, signal);
   const id = s.id;
   const list = rankIdeas(s);
   const mine = s.turns.next?.me || {};
@@ -403,34 +517,78 @@ async function nextStage(s) {
 }
 
 /* ---------------- 06 waiting / their frame arrives ---------------- */
+async function waitPlan(s, signal) {
+  const id = s.id, owner = roleOf(s) === 'owner', you = s.myName || 'you', them = s.friendName;
+  const plan = planOf(s), reply = replyOf(s);
+  if (reply && reply.accepted === false) {
+    shell({
+      title: 'stage 3 · next', back: `#/s/${id}/stage/next`,
+      body: `${progress('next')}<div class="stack-sm" style="gap:2px"><h1 class="display">${owner ? `${esc(them)} can’t make it this time` : 'maybe another time'}</h1>
+        <p class="body muted" style="margin:0">${owner ? 'That’s okay. Plans change. You could suggest something different.' : 'No problem. They’ve been told.'}</p></div>
+        ${tip('enc', 'a no to one plan isn’t a no to you.')}`,
+      actions: owner ? `<a class="btn btn-primary" href="#/s/${id}/stage/next">Suggest something else</a><a class="btn btn-tertiary" href="#/strips">Not now, just keep chatting</a>` : `<a class="btn btn-primary" href="#/strips">Back to my photostrips</a>`,
+    });
+    return;
+  }
+  if (reply) {
+    shell({
+      title: 'stage 3 · next', back: `#/s/${id}/stage/next`,
+      body: `${progress('meetup')}
+        <div class="stack-sm" style="gap:2px"><h1 class="display">${owner ? `${esc(them)}’s in!` : 'you’re in!'}</h1>
+        <p class="body muted" style="margin:0">The plan is on the strip. Sort out the details wherever you two chat.</p></div>
+        <div class="frames">
+          ${frame({ who: owner ? you : them, stage: 'next', plan: { idea: plan.idea, time: plan.time } })}
+          ${frame({ who: owner ? them : you, stage: 'next', text: reply.text || '“I’m in!”', isNew: owner })}
+        </div>
+        <div class="handoff">${icon.chat}<p>Pick a time and place in your chat.</p><a href="${IG_DM}" target="_blank" rel="noopener">Open Instagram</a></div>`,
+      actions: `<a class="btn btn-primary" href="#/s/${id}/meetup">We met up · add our photo</a><a class="btn btn-tertiary" href="#/strips">Do this after the meet-up</a>`,
+    });
+    return;
+  }
+  shell({
+    title: 'our photostrip', back: `#/s/${id}/stage/next`,
+    body: `${progress('next')}
+      <div class="stack-sm" style="gap:2px"><h1 class="display">plan sent. nice one!</h1>
+      <p class="body muted" style="margin:0">${esc(them)} will see your plan next time they open the link. Replies can take a day or two, and that’s normal.</p></div>
+      <div class="frames">${frame({ who: you, stage: 'next', plan: { idea: plan?.idea, time: plan?.time } })}</div>
+      ${tip('ovr', 'no reply yet doesn’t mean no. life gets busy.')}`,
+    actions: MODE === 'demo'
+      ? `<button class="btn btn-primary" id="skip">Skip the wait (demo)</button><a class="btn btn-tertiary" href="#/">Back to home</a>`
+      : `<button class="btn btn-primary" id="refresh" type="button">Check for ${esc(them)}’s reply</button><a class="btn btn-tertiary" href="#/">Back to home</a>`,
+  });
+  $('#refresh')?.addEventListener('click', () => render());
+  $('#skip')?.addEventListener('click', () => store.waitForFriend(id, 'next', { delay: 0 }).then(() => location.hash.endsWith('/wait/next') && render()));
+  try {
+    await store.waitForFriend(id, 'next', { delay: 6000, signal });
+    if (location.hash.endsWith('/wait/next')) render();
+  } catch { /* navigated away */ }
+}
+
 async function waitView(id, key, signal) {
   const s = await getStripOr404(id);
   if (!s) return;
   const st = stages[key];
   const me = s.turns[key]?.me;
   if (!me) return go(`#/s/${id}/stage/${key}`);
+  if (key === 'next') return waitPlan(s, signal);
   const friend = s.turns[key]?.friend;
   const nextKey = ORDER[ORDER.indexOf(key) + 1];
   const you = s.myName || 'you';
-  const isPlan = key === 'next';
 
   if (friend) {
-    // Not a chat: the friend's part shows up as a new frame on the shared strip.
+    // Not a chat: the other person's part shows up as a new frame on the shared strip.
     // The conversation itself carries on in their own messaging app.
     shell({
       title: `stage ${st.n} · ${st.label}`, back: `#/s/${id}/stage/${key}`,
-      body: `${progress(isPlan ? 'meetup' : nextKey)}
-        <div class="stack-sm" style="gap:2px"><h1 class="display">${isPlan ? `${esc(s.friendName)}’s in!` : `${esc(s.friendName)} added theirs`}</h1>
-        <p class="body muted" style="margin:0">${isPlan ? 'Your plan is on the strip. Sort out the details wherever you two chat.' : `Their frame is on your photostrip now.${me.askBack ? ' They answered your ask-back too.' : ''}`}</p></div>
+      body: `${progress(nextKey)}
+        <div class="stack-sm" style="gap:2px"><h1 class="display">${esc(s.friendName)} added theirs</h1>
+        <p class="body muted" style="margin:0">Their frame is on your photostrip now.${me.askBack ? ' They answered your ask-back too.' : ''}${friend.askBack ? ` They asked: “${esc(friend.askBack)}”` : ''}</p></div>
         <div class="frames">
-          ${isPlan
-            ? frame({ who: you, stage: 'next', plan: { idea: me.idea, time: me.time } }) + frame({ who: s.friendName, stage: 'next', text: '“I’m in!”', isNew: true })
-            : frame({ who: you, stage: st.label, text: me.text, photo: me.photo }) + frame({ who: s.friendName, stage: st.label, text: friend.text, isNew: true })}
+          ${frame({ who: you, stage: st.label, text: me.text, photo: me.photo })}
+          ${frame({ who: s.friendName, stage: st.label, text: friend.text, photo: friend.photo, isNew: true })}
         </div>
-        <div class="handoff">${icon.chat}<p>${isPlan ? 'Pick a time and place in your chat.' : `Something to reply to? Keep the chat going in your DMs.`}</p><a href="${IG_DM}" target="_blank" rel="noopener">Open Instagram</a></div>`,
-      actions: isPlan
-        ? `<a class="btn btn-primary" href="#/s/${id}/meetup">We met up · add our photo</a><a class="btn btn-tertiary" href="#/strips">Do this after the meet-up</a>`
-        : `<a class="btn btn-primary" href="#/s/${id}/stage/${nextKey}">On to stage ${st.n + 1}: ${stages[nextKey].label}</a>`,
+        <div class="handoff">${icon.chat}<p>Something to reply to? Keep the chat going in your DMs.</p><a href="${IG_DM}" target="_blank" rel="noopener">Open Instagram</a></div>`,
+      actions: `<a class="btn btn-primary" href="#/s/${id}/stage/${nextKey}">On to stage ${st.n + 1}: ${stages[nextKey].label}</a>`,
     });
     return;
   }
@@ -439,7 +597,7 @@ async function waitView(id, key, signal) {
     title: 'our photostrip', back: `#/s/${id}/stage/${key}`,
     body: `${progress(key)}
       <div class="stack-sm" style="gap:2px"><h1 class="display">added. nice one!</h1>
-      <p class="body muted" style="margin:0">${esc(s.friendName)} will see your ${isPlan ? 'plan' : 'frame'} next time they open the link. Replies can take a day or two, and that’s normal.</p></div>
+      <p class="body muted" style="margin:0">${esc(s.friendName)} will see your frame next time they open the link. Replies can take a day or two, and that’s normal.</p></div>
       <div class="polaroids" aria-hidden="true">
         <figure class="polaroid tilt-l" style="margin:0"><div class="ph">${me.photo ? `<img src="${me.photo}" alt="">` : ''}</div><figcaption>you · done</figcaption></figure>
         <figure class="polaroid tilt-r" style="margin:0"><div class="ph waiting"><span class="dots"><i></i><i></i><i></i></span></div><figcaption>${esc(s.friendName)}…</figcaption></figure></div>
@@ -448,8 +606,9 @@ async function waitView(id, key, signal) {
       <a class="list-row" href="#/faq">What if they reply with one word? ${icon.chevron}</a>`,
     actions: MODE === 'demo'
       ? `<button class="btn btn-primary" id="skip">Skip the wait (demo)</button><a class="btn btn-tertiary" href="#/">Back to home</a>`
-      : `<button class="btn btn-primary" disabled>Gentle nudge available in 3 days</button><a class="btn btn-tertiary" href="#/">Back to home</a>`,
+      : `<button class="btn btn-primary" id="refresh" type="button">Check for ${esc(s.friendName)}’s frame</button><a class="btn btn-tertiary" href="#/">Back to home</a>`,
   });
+  $('#refresh')?.addEventListener('click', () => render());
   $('#skip')?.addEventListener('click', () => {
     store.waitForFriend(id, key, { delay: 0 }).then(() => location.hash.endsWith(`/wait/${key}`) && render());
   });
@@ -468,7 +627,7 @@ async function meetupView(id) {
     title: 'last frame', back: `#/s/${id}/wait/next`,
     body: `${progress('meetup')}
       <div class="stack-sm" style="gap:2px"><h1 class="display">you met up. nice.</h1>
-      <p class="body muted" style="margin:0">Add a photo from your ${esc(s.turns.next?.me?.idea || 'meet-up')} to finish the strip.</p></div>
+      <p class="body muted" style="margin:0">Add a photo from your ${esc(planOf(s)?.idea || 'meet-up')} to finish the strip.</p></div>
       <div class="photo-pick"><img class="thumb" id="thumb" alt="Your meet-up photo" ${photo ? `src="${photo}"` : 'hidden'}>
         <label class="btn btn-secondary file-label" style="width:auto">${icon.camera}<span id="photo-btn">${photo ? 'Change photo' : 'Add a photo'}</span><input type="file" id="photo" accept="image/*"></label></div>
       <div class="field"><label class="label" for="cap">Caption <span class="muted">(optional)</span></label>
@@ -487,11 +646,11 @@ async function meetupView(id) {
   });
   const finish = async (withPhoto) => {
     try {
-      const cur = await store.getStrip(id);
-      await store.updateStrip(id, { stage: 'done', turns: { ...cur.turns, meetup: { photo: withPhoto ? photo : null, caption: $('#cap').value.trim() } } });
+      await store.updateStrip(id, { stage: 'done', turns: { meetup: { photo: withPhoto ? photo : null, caption: $('#cap').value.trim() } } });
       go(`#/s/${id}/done`);
-    } catch {
-      toast('Your browser’s storage is full. Try a smaller photo.');
+    } catch (e) {
+      console.error(e);
+      toast(saveError(e));
     }
   };
   $('#finish').addEventListener('click', () => (photo ? finish(true) : (toast('Add a photo first, or tap the option below.'), $('#photo').click())));
@@ -499,19 +658,66 @@ async function meetupView(id) {
 }
 
 /* ---------------- 09 done ---------------- */
-async function doneView(id) {
+function doorBlock(s) {
+  if (s.doorDone) return `<div class="door-card" id="door"><p class="small" style="margin:0">${esc(door.thanks)}</p></div>`;
+  return `<div class="door-card" id="door"><div id="door-start" class="stack-sm" style="gap:8px">
+      <button class="btn btn-secondary" id="door-btn" type="button">${esc(door.button)}</button>
+      <p class="small muted" style="margin:0">${esc(door.hint)}</p></div></div>`;
+}
+
+async function doneView(id, signal) {
   const s = await getStripOr404(id);
   if (!s) return;
+  let shareOk = s.shareOk || { me: true, friend: true };
+  const them = s.friendName;
+  const canShare = () => !LIVE || (shareOk.me && shareOk.friend);
   shell({
     title: 'our photostrip', back: '#/strips',
     body: `${progress('done')}
       <h1 class="display">your photostrip is done!</h1>
       <div class="strip-preview"><p class="muted small" id="rendering">Making your strip…</p></div>
-      <p class="small muted" style="margin:0">It’s private to you two. For the Photostrip Challenge, share it to your Story${site.igHandle ? ` and tag ${esc(site.igHandle)}` : ''} with ${esc(site.hashtag)}.${MODE === 'demo' ? ` In the real version, ${esc(s.friendName)} is asked first.` : ''}</p>`,
+      <p class="small muted" style="margin:0">It’s private to you two. For the Photostrip Challenge, share it to your Story${site.igHandle ? ` and tag ${esc(site.igHandle)}` : ''} with ${esc(site.hashtag)}.${MODE === 'demo' ? ` In the real version, ${esc(them)} is asked first.` : ' Posting needs a yes from both of you.'}</p>
+      ${LIVE ? `<div class="card stack-sm" style="gap:8px">
+        <label class="switch-row"><input type="checkbox" id="share-ok" ${shareOk.me ? 'checked' : ''}><span>I’m happy for this strip, with both our photos and words, to be posted on Instagram.</span></label>
+        <p class="status-row ${shareOk.friend ? 'ok' : ''}" id="friend-ok" role="status"><span class="dot"></span><span id="friend-ok-text"></span></p></div>` : ''}
+      ${LIVE ? doorBlock(s) : ''}`,
     actions: `<button class="btn btn-primary" id="share" disabled>${icon.share} Share to my Story</button>
       <div class="row"><button class="btn btn-tertiary" id="download" disabled>${icon.download} Save image</button>
-      <button class="btn btn-tertiary" id="again">Start another</button></div>`,
+      ${LIVE ? '' : '<button class="btn btn-tertiary" id="again">Start another</button>'}</div>`,
   });
+  let ready = false;
+  const sync = () => {
+    $('#share').disabled = !(ready && canShare());
+    const el = $('#friend-ok-text');
+    if (el) {
+      el.textContent = shareOk.friend ? `${them} said yes to sharing.` : `${them} hasn’t said yes to sharing yet. Saving the image for yourself is always fine.`;
+      $('#friend-ok').classList.toggle('ok', !!shareOk.friend);
+    }
+  };
+  sync();
+  $('#share-ok')?.addEventListener('change', async (e) => {
+    try { shareOk = (await store.setShareOk(id, e.target.checked)).shareOk; } catch (err) { e.target.checked = !e.target.checked; toast(saveError(err)); }
+    sync();
+  });
+
+  // Fake door: tapping reveals honestly that it isn't built, then asks what they'd want.
+  $('#door-btn')?.addEventListener('click', () => {
+    store.logEvent?.('door_tap', id);
+    $('#door').innerHTML = `<form id="door-form" class="stack-sm" style="gap:10px"><p class="small" style="margin:0">${esc(door.reveal)}</p>
+      <fieldset class="chips"><legend class="visually-hidden">What would you want?</legend>${door.options.map((o, i) => `<label class="chip"><input type="radio" name="choice" value="${esc(o.id)}" ${i === 0 ? 'checked' : ''}><span>${esc(o.label)}</span></label>`).join('')}</fieldset>
+      <label class="label" for="door-note">Anything else? <span class="muted">(optional)</span></label>
+      <input class="input" id="door-note" maxlength="200" autocomplete="off">
+      <div class="row"><button class="btn btn-primary" type="submit">Send</button><button class="btn btn-tertiary" type="button" id="door-skip">No thanks</button></div></form>`;
+    $('#door-skip').addEventListener('click', () => { $('#door').innerHTML = `<p class="small" style="margin:0">No problem.</p>`; });
+    $('#door-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await store.doorResponse(id, $('input[name=choice]:checked').value, $('#door-note').value.trim());
+        $('#door').innerHTML = `<p class="small" style="margin:0">${esc(door.thanks)}</p>`;
+      } catch (err) { toast(saveError(err)); }
+    });
+  });
+
   let blob;
   try {
     blob = await renderPhotostrip(s, { logo: ASSETS.logo, hashtag: site.hashtag });
@@ -521,18 +727,21 @@ async function doneView(id) {
     return;
   }
   const url = URL.createObjectURL(blob);
-  $('.strip-preview').innerHTML = `<img src="${url}" alt="Your photostrip with ${esc(s.friendName)}: now, then and next frames">`;
-  $('#share').disabled = false;
+  $('.strip-preview').innerHTML = `<img src="${url}" alt="Your photostrip with ${esc(them)}: now, then and next frames">`;
+  ready = true;
   $('#download').disabled = false;
-  const fname = `reframe-photostrip-${s.friendName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
+  sync();
+  const fname = `reframe-photostrip-${them.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
   const download = () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = fname;
     a.click();
   };
-  $('#download').addEventListener('click', () => { download(); toast('Saved to your downloads.'); });
+  $('#download').addEventListener('click', () => { download(); store.logEvent?.('download_image', id); toast('Saved to your downloads.'); });
   $('#share').addEventListener('click', async () => {
+    if (!canShare()) return;
+    store.logEvent?.('share_story', id);
     const file = new File([blob], fname, { type: 'image/png' });
     if (navigator.canShare?.({ files: [file] })) {
       try { await navigator.share({ files: [file], text: `${site.hashtag} we picked up where we left off.` }); } catch {}
@@ -541,10 +750,21 @@ async function doneView(id) {
       toast(`Saved. Post it to your Story with ${site.hashtag}.`);
     }
   });
-  $('#again').addEventListener('click', () => {
+  $('#again')?.addEventListener('click', () => {
     sessionStorage.setItem('reconnect.prefill', JSON.stringify({ friendName: s.friendName, gap: 'months', place: s.place }));
     go('#/start');
   });
+
+  // Live: keep the other person's sharing answer fresh while this screen is open.
+  if (LIVE) {
+    try {
+      for (;;) {
+        await new Promise((res, rej) => { const t = setTimeout(res, 8000); signal?.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('aborted', 'AbortError')); }); });
+        const fresh = await store.getStrip(id);
+        if (fresh?.shareOk) { shareOk = fresh.shareOk; sync(); }
+      }
+    } catch { /* navigated away */ }
+  }
 }
 
 /* ---------------- 10 FAQ ---------------- */
@@ -586,41 +806,89 @@ async function faqView() {
 /* ---------------- your strips ---------------- */
 async function stripsView() {
   const strips = await store.listStrips();
-  const label = { invite: 'Invite not sent yet', now: 'Stage 1', then: 'Stage 2', next: 'Stage 3', meetup: 'Waiting for your meet-up photo', done: 'Done' };
+  const rows = strips.map((s) => `<a class="list-row" href="#/s/${s.id}"><span><span class="subheading" style="display:block">${esc(s.friendName)}</span><span class="small muted">${ROUTE_LABEL[routeOf(s)] || ''}</span></span>${icon.chevron}</a>`);
   shell({
     title: 'your photostrips', back: '#/',
     body: `<h1 class="heading">your photostrips</h1>
-      ${strips.length ? `<div class="stack-sm" style="gap:8px">${strips.map((s) => `<a class="list-row" href="#/s/${s.id}"><span><span class="subheading" style="display:block">${esc(s.friendName)}</span><span class="small muted">${label[s.stage] || ''}</span></span>${icon.chevron}</a>`).join('')}</div>`
-        : `${tip('ovr', 'nothing here yet. your first photostrip is one message away.')}`}`,
+      ${strips.length ? `<div class="stack-sm" style="gap:8px">${rows.join('')}</div>` : `${tip('ovr', 'nothing here yet. your first photostrip is one message away.')}`}
+      ${LIVE && strips.length ? `<div class="card stack-sm" style="gap:8px"><h2 class="subheading">Using another phone or browser?</h2>
+        <p class="small muted" style="margin:0">Photostrips are tied to the browser you made them in. Copy a return link to open one somewhere else. Keep it private: anyone with it can open that strip.</p>
+        ${strips.map((s) => `<button class="btn btn-tertiary" style="justify-content:flex-start;min-height:40px" data-return="${s.id}" data-role="${roleOf(s)}">Copy return link · ${esc(s.friendName)}</button>`).join('')}</div>` : ''}`,
     actions: `<a class="btn btn-primary" href="#/start">Start a new photostrip</a>`,
   });
+  $$('[data-return]').forEach((b) => b.addEventListener('click', async () => {
+    const link = store.returnLink(b.dataset.return, b.dataset.role);
+    if (!link) return toast('This browser doesn’t hold the link for that strip.');
+    try { await navigator.clipboard.writeText(link); toast('Return link copied.'); } catch { toast('Couldn’t copy automatically.'); }
+  }));
 }
 
 /* ---------------- about ---------------- */
 async function aboutView() {
   shell({
     title: 'about', back: '#/',
-    body: `<h1 class="heading">about this prototype</h1>
+    body: `<h1 class="heading">about re:frame</h1>
       <p class="body" style="margin:0">${esc(site.disclaimer)}</p>
+      ${LIVE ? `
+      <div class="card stack-sm"><h2 class="subheading">What we keep</h2>
+        <p class="small muted" style="margin:0">Names you type, your words, your photos, and simple counts like “link opened” so we can see if the pilot works. No accounts, no contact details, no tracking of what you do elsewhere.</p></div>
+      <div class="card stack-sm"><h2 class="subheading">Who can see it</h2>
+        <p class="small muted" style="margin:0">Only the two of you, through your private links. Nothing is posted anywhere unless you both say yes on the finished strip. Photos are stored privately and shown through short-lived links.</p></div>
+      <div class="card stack-sm"><h2 class="subheading">How long</h2>
+        <p class="small muted" style="margin:0">Everything is deleted after the pilot, by ${esc(site.retention)}. You can delete your photostrips earlier, below.</p></div>
+      <div class="card stack-sm"><h2 class="subheading">Where it runs</h2>
+        <p class="small muted" style="margin:0">Data is stored with Supabase (Singapore). A Cloudflare check confirms you’re a person before a strip is created.</p></div>
+      <button class="btn btn-secondary" id="delete-all" type="button">Delete all my photostrips</button>
+      <button class="btn btn-tertiary" id="forget" type="button">Sign out of this browser</button>`
+      : `
       <div class="card stack-sm"><h2 class="subheading">Demo mode</h2>
         <p class="small muted" style="margin:0">Everything you type and any photos you add stay in this browser on this device. Nothing is sent to a server, and your friend’s side is simulated so you can try the full journey on your own.</p></div>
-      <div class="card stack-sm"><h2 class="subheading">How the real version would work</h2>
-        <p class="small muted" style="margin:0">re:frame isn’t a chat app. Your friend opens your link on their own phone and adds their frame to your shared photostrip; the actual conversation stays in Instagram, Telegram or wherever you already chat. Strips are private to the two of you, deleted after the pilot, and only shared publicly if you both agree.</p></div>
-      <button class="btn btn-secondary" id="reset">Clear demo data on this device</button>`,
+      <button class="btn btn-secondary" id="reset">Clear demo data on this device</button>`}`,
   });
-  $('#reset').addEventListener('click', async () => {
+  $('#reset')?.addEventListener('click', async () => {
     if (!confirm('Delete all demo photostrips on this device?')) return;
     await store.reset();
     toast('Demo data cleared.');
     go('#/');
   });
+  $('#delete-all')?.addEventListener('click', async (e) => {
+    if (!confirm('Delete every photostrip you’re part of from this browser? This removes it for your friend too and can’t be undone.')) return;
+    e.currentTarget.disabled = true;
+    try {
+      const n = await store.deleteAll();
+      toast(n ? 'Deleted.' : 'Nothing to delete.');
+      go('#/');
+    } catch (err) { e.currentTarget.disabled = false; toast(saveError(err)); }
+  });
+  $('#forget')?.addEventListener('click', async () => {
+    if (!confirm('Sign out here? Your photostrips stay safe, but you’ll need your return links to open them again.')) return;
+    await store.reset();
+    toast('Signed out of this browser.');
+    go('#/');
+  });
+}
+
+/* ---------------- join / return links (live) ---------------- */
+async function claimView(token, signal, kind) {
+  shell({ body: `<p class="muted" style="margin:40px 0;text-align:center">Opening your photostrip…</p>` });
+  if (!LIVE) return go('#/');
+  try {
+    const r = await store.claim(token);
+    location.replace(`#/s/${r.id}`);
+  } catch (e) {
+    const code = e?.code || e?.message || '';
+    if (/own_link/.test(code)) {
+      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">that’s your own link</h1><p class="muted" style="margin:0">This link is for your friend. Send it to them, and open your own photostrip from the home screen.</p>`, actions: `<a class="btn btn-primary" href="#/strips">My photostrips</a>` });
+    } else if (/invalid_token/.test(code)) {
+      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link isn’t working</h1><p class="muted" style="margin:0">It may have been typed wrong, cut off, or the photostrip was deleted. Ask your friend to send it again.</p>${tip('ovr', 'no stress. links get cut off sometimes.')}`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
+    } else showError(e, () => claimView(token, signal, kind));
+  }
 }
 
 async function resume(id) {
   const s = await getStripOr404(id);
   if (!s) return;
-  const map = { invite: `invite`, now: s.turns.now?.me ? 'wait/now' : 'stage/now', then: s.turns.then?.me ? 'wait/then' : 'stage/then', next: s.turns.next?.me ? 'wait/next' : 'stage/next', meetup: 'meetup', done: 'done' };
-  location.replace(`#/s/${id}/${map[s.stage] || 'invite'}`);
+  location.replace(`#/s/${id}/${routeOf(s)}`);
 }
 
 /* ---------------- router ---------------- */
@@ -630,14 +898,16 @@ const routes = [
   [/^#\/faq$/, faqView],
   [/^#\/strips$/, stripsView],
   [/^#\/about$/, aboutView],
-  [/^#\/s\/(\w+)$/, resume],
-  [/^#\/s\/(\w+)\/invite$/, invite],
-  [/^#\/s\/(\w+)\/sent$/, sent],
-  [/^#\/s\/(\w+)\/friend$/, friendView],
-  [/^#\/s\/(\w+)\/stage\/(now|then|next)$/, stageView],
-  [/^#\/s\/(\w+)\/wait\/(now|then|next)$/, waitView],
-  [/^#\/s\/(\w+)\/meetup$/, meetupView],
-  [/^#\/s\/(\w+)\/done$/, doneView],
+  [/^#\/j\/([\w-]+)$/, (token, signal) => claimView(token, signal, 'j')],
+  [/^#\/r\/([\w-]+)$/, (token, signal) => claimView(token, signal, 'r')],
+  [/^#\/s\/([\w-]+)$/, resume],
+  [/^#\/s\/([\w-]+)\/invite$/, invite],
+  [/^#\/s\/([\w-]+)\/sent$/, sent],
+  [/^#\/s\/([\w-]+)\/friend$/, friendView],
+  [/^#\/s\/([\w-]+)\/stage\/(now|then|next)$/, stageView],
+  [/^#\/s\/([\w-]+)\/wait\/(now|then|next)$/, waitView],
+  [/^#\/s\/([\w-]+)\/meetup$/, meetupView],
+  [/^#\/s\/([\w-]+)\/done$/, doneView],
 ];
 
 let controller;
@@ -655,7 +925,7 @@ async function render() {
   // After navigating, move focus to the new screen so screen readers announce it.
   if (!first) setTimeout(() => $('#main-content')?.focus({ preventScroll: true }), 0);
   first = false;
-  await p;
+  try { await p; } catch (e) { if (e?.name !== 'AbortError') { console.error(e); showError(e); } }
 }
 
 window.addEventListener('hashchange', render);

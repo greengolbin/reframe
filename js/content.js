@@ -10,6 +10,8 @@ export const site = {
   hashtag: '#ThisIsRandomBut',
   // TODO(team): confirm the Instagram account people should tag.
   igHandle: '', // the account handle once the team confirms the account; leave empty to hide
+  // TODO(team): confirm with Ms Angie; the purge job uses this date.
+  retention: '31 January 2027',
   disclaimer:
     'Student project prototype for the MSF Youth and Relationships brief (Ngee Ann Polytechnic, IMP capstone). Not an official MSF service.',
 };
@@ -164,3 +166,17 @@ export const faq = [
 ];
 
 export const faqCats = ['Starting', 'Awkward gaps', 'Keeping it going'];
+
+// Fake door: "Keep going together". Tapping it shows an honest "not built yet" note and this short form.
+export const door = {
+  button: 'Keep going together',
+  hint: 'Turn this into something you two do now and then.',
+  reveal: 'We haven’t built this yet. Tell us what you’d want and we’ll use it to decide what to make next.',
+  options: [
+    { id: 'weekly-prompt', label: 'A new prompt for us each week' },
+    { id: 'shared-album', label: 'A shared album of our strips' },
+    { id: 'nudges', label: 'Gentle reminders to keep chatting' },
+    { id: 'other', label: 'Something else' },
+  ],
+  thanks: 'Thanks, that helps. Nothing else is needed from you.',
+};

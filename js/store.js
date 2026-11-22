@@ -1,10 +1,10 @@
 // Data layer.
 //
-// The app only talks to `store` through the async methods below. In demo mode
-// everything is kept in this browser (localStorage) and the friend's replies
-// are simulated. To make the real two-person version, write a second class
-// with the same methods that calls a backend (e.g. Supabase) and swap it in
-// at the bottom of this file. No screen code needs to change.
+// The app only talks to `store` through the async methods below. DemoStore keeps
+// everything in this browser and simulates the friend (?demo in the address).
+// LiveStore (js/live-store.js) is the real two-person version on Supabase and
+// returns strips from the viewer's side: `me` is the viewer, `friend` is the other
+// person, and `role` is 'owner' or 'friend'.
 //
 // Strip shape:
 // {
@@ -20,8 +20,9 @@
 // }
 
 import { demoFriend } from './content.js';
+import { config } from './config.js';
 
-export const MODE = 'demo';
+export const MODE = config.live ? 'live' : 'demo';
 
 const KEY = 'reconnect.demo.v1';
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
@@ -45,13 +46,14 @@ class DemoStore {
     }
   }
 
-  async createStrip({ friendName, gap, place }) {
+  async createStrip({ friendName, gap, place, myName = '' }) {
     const db = this.#read();
     const strip = {
       id: uid(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
       friendName,
+      myName,
       gap,
       place,
       opener: '',
@@ -75,7 +77,9 @@ class DemoStore {
     const db = this.#read();
     const s = db.strips[id];
     if (!s) return null;
-    Object.assign(s, patch, { updatedAt: Date.now() });
+    const { turns, ...rest } = patch;
+    Object.assign(s, rest, { updatedAt: Date.now() });
+    if (turns) for (const [k, v] of Object.entries(turns)) s.turns[k] = { ...(s.turns[k] || {}), ...v };
     const ok = this.#write(db);
     if (!ok) throw new Error('storage');
     return s;
@@ -123,4 +127,5 @@ class DemoStore {
   }
 }
 
-export const store = new DemoStore();
+// Live mode is loaded on demand so demo mode never downloads the Supabase client.
+export const store = config.live ? await import('./live-store.js').then((m) => m.liveStore) : new DemoStore();

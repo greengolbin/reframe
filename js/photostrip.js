@@ -18,6 +18,8 @@ const loadImg = (src) =>
     const i = new Image();
     i.onload = () => res(i);
     i.onerror = rej;
+    // Signed storage URLs are cross-origin; the canvas needs CORS to export the image.
+    if (/^https?:/.test(src)) i.crossOrigin = 'anonymous';
     i.src = src;
   });
 
@@ -175,7 +177,8 @@ export async function renderPhotostrip(strip, assets) {
     }
     y += hh + capH;
   }
-  const plan = [t.next?.me?.idea, t.next?.me?.time].filter(Boolean);
+  const planTurn = strip.role === 'friend' ? t.next?.friend : t.next?.me;
+  const plan = [planTurn?.idea, planTurn?.time].filter(Boolean);
   await drawFrame(ctx, { photo: t.meetup?.photo, lines: plan }, sx + pad, y, fw, fh, 44);
   caption(ctx, t.meetup?.caption ? `next · ${t.meetup.caption}` : 'next · together', W / 2, y + fh + capH / 2, 40);
   y += fh + capH;
