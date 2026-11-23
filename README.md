@@ -62,3 +62,13 @@ No build step and no dependencies. GitHub Pages serves the files as they are.
 - photo storage with size limits;
 - realtime updates instead of the simulated reply;
 - a consent notice, PDPA-compliant retention (delete after the pilot) and opt-in sharing by both friends.
+
+## Live two-person mode (Supabase)
+
+- Off by default until go-live. Turn it on for a browser with `?live` on the address (for example `https://greengolbin.github.io/reframe/?live`); `?demo` turns it off again. Friend links (`#/j/…`) and return links (`#/r/…`) always open live mode. To launch for everyone, set `LIVE_BY_DEFAULT = true` in `js/config.js`.
+- Database: `supabase/migrations/001_init.sql` (tables, access rules, functions, private photo bucket) and `002_kpi_and_ping.sql` (KPI views, ping). All access is through functions; the browser never reads tables directly.
+- Sign-in: Supabase anonymous sign-ins with a Cloudflare Turnstile check. The secret link tokens are the real credentials and are stored hashed.
+- KPI views (run in the Supabase SQL editor): `select * from private.kpi_summary;` `select * from private.kpi_door;` `select * from private.door_choices;`
+- Booth tag: share `https://greengolbin.github.io/reframe/?ref=booth` on booth materials; the first tag seen on a device is kept.
+- Keep-alive: `.github/workflows/keepalive.yml` pings the database twice a week so the free project does not pause.
+- `js/vendor/supabase.js` is a bundled copy of `@supabase/supabase-js` 2.119.2.
