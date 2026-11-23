@@ -5,6 +5,18 @@
 // ?live in the address turns live mode on for this browser (remembered); ?demo turns it off.
 // Invite links (#/j/…) and return links (#/r/…) always open live mode.
 const LIVE_BY_DEFAULT = false;
+
+// ?reset clears everything re:frame keeps on this device (demo strips, saved links, session, tags),
+// then reloads without it. Use it on pitch and booth demo phones before presenting.
+(function resetDevice() {
+  if (!new URLSearchParams(location.search).has('reset')) return;
+  try {
+    for (const st of [localStorage, sessionStorage]) {
+      Object.keys(st).filter((k) => /^(reframe|reconnect)\./.test(k)).forEach((k) => st.removeItem(k));
+    }
+  } catch { /* storage blocked */ }
+  location.replace(location.pathname);
+})();
 const MODE_KEY = 'reframe.mode';
 function resolveLive() {
   const q = new URLSearchParams(location.search);

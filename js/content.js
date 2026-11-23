@@ -4,7 +4,7 @@
 
 export const site = {
   campaign: 'This Is Random But…',
-  tagline: "Let's pick up where we left off.",
+  tagline: "Let’s pick up where we left off.",
   tool: 're:frame',
   // TODO(team): confirm the campaign hashtag before launch.
   hashtag: '#ThisIsRandomBut',
@@ -58,7 +58,7 @@ export const stages = {
     n: 1,
     label: 'now',
     title: 'start where you are',
-    question: "what's taking up most of your time these days?",
+    question: "what’s taking up most of your time these days?",
     placeholder: 'school, work, a new hobby, a show you can’t stop watching…',
     askBack: 'what about you? still doing the same things?',
     note: 'Starting with the present keeps it light. No need to bring up the past yet.',
@@ -110,7 +110,7 @@ export const faq = [
   {
     id: 'a-year',
     cat: 'Awkward gaps',
-    q: "we haven't talked in a year. how do I reach out?",
+    q: "we haven’t talked in a year. how do I reach out?",
     a: 'Lead with a specific reason, not an apology. Mention what reminded you of them, then ask one easy question they can answer quickly.',
     try: 'walked past our old bubble tea place today. still obsessed with brown sugar milk?',
   },
@@ -138,7 +138,7 @@ export const faq = [
   {
     id: 'changed',
     cat: 'Awkward gaps',
-    q: "what if they've changed a lot?",
+    q: "what if they’ve changed a lot?",
     a: 'You both have. Start with what they are up to now instead of trying to pick up exactly where you left off, and be curious rather than comparing.',
     try: 'heard you’re doing design now?? that’s so cool, how did that happen',
   },

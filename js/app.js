@@ -4,7 +4,8 @@ import { renderPhotostrip } from './photostrip.js';
 
 const view = document.getElementById('app');
 const ASSETS = {
-  logo: 'assets/img/logo.webp',
+  logo: 'assets/img/logo-sm.webp', // 2x of the 48 px shown on screen
+  logoFull: 'assets/img/logo.webp', // full size for the 1080 px strip export
   enc: 'assets/img/encourager.svg',
   ovr: 'assets/img/overthinker.svg',
 };
@@ -736,7 +737,7 @@ async function doneView(id, signal) {
 
   let blob;
   try {
-    blob = await renderPhotostrip(s, { logo: ASSETS.logo, hashtag: site.hashtag });
+    blob = await renderPhotostrip(s, { logo: ASSETS.logoFull, hashtag: site.hashtag });
   } catch (e) {
     console.error(e);
     $('#rendering').textContent = 'Couldn’t draw the strip on this browser.';
