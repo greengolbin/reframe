@@ -12,6 +12,7 @@ import { getCaptchaToken } from './turnstile.js';
 
 const REG_KEY = 'reframe.live.v1';
 const REF_KEY = 'reframe.ref';
+const VISIT_KEY = 'reframe.visits';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const POLL_MS = 8000;
 const SIGN_TTL = 3600;
@@ -38,6 +39,25 @@ class LiveStore {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'reframe.auth' },
   });
   #signing = null;
+
+  constructor() {
+    this.#logVisit();
+  }
+
+  // One count per source per day on this browser. No sign-in and nothing that identifies the person.
+  // Source: ?ref=… on the address (booth, boost3, boost7, bio, …), friend links count as 'invite'.
+  #logVisit() {
+    try {
+      const q = (new URLSearchParams(location.search).get('ref') || '').toLowerCase();
+      const ref = /^[a-z0-9_-]{1,24}$/.test(q) ? q : /^#\/j\//.test(location.hash) ? 'invite' : /^#\/r\//.test(location.hash) ? 'return' : 'direct';
+      const day = new Date().toISOString().slice(0, 10);
+      const seen = JSON.parse(localStorage.getItem(VISIT_KEY) || '{}');
+      if (seen[ref] === day) return;
+      seen[ref] = day;
+      localStorage.setItem(VISIT_KEY, JSON.stringify(seen));
+      this.#sb.rpc('log_visit', { p_ref: ref }).then(() => {}, () => {});
+    } catch { /* storage blocked: skip the count */ }
+  }
   #signed = new Map(); // storage path -> { url, exp }
   #urlToPath = new Map(); // signed URL or data URL -> storage path
 
@@ -237,6 +257,10 @@ class LiveStore {
   async claim(token) {
     const r = await this.#rpc('claim_strip', { p_token: token });
     this.#remember(r.id, r.role === 'owner' ? 'o' : 'f', token);
+    // People who arrive through a friend's link and later start their own strip are tagged 'invite'.
+    if (r.role === 'friend') {
+      try { if (!localStorage.getItem(REF_KEY)) localStorage.setItem(REF_KEY, 'invite'); } catch { /* ignore */ }
+    }
     return r;
   }
   async setShareOk(id, value) {

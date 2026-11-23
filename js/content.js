@@ -10,7 +10,7 @@ export const site = {
   hashtag: '#ThisIsRandomBut',
   // TODO(team): confirm the Instagram account people should tag.
   igHandle: '', // the account handle once the team confirms the account; leave empty to hide
-  // TODO(team): confirm with Ms Angie; the purge job uses this date.
+  // TODO(team): confirm with Ms Angie. Shown on About; delete the data by this date.
   retention: '31 January 2027',
   disclaimer:
     'Student project prototype for the MSF Youth and Relationships brief (Ngee Ann Polytechnic, IMP capstone). Not an official MSF service.',
@@ -171,11 +171,12 @@ export const faqCats = ['Starting', 'Awkward gaps', 'Keeping it going'];
 export const door = {
   button: 'Keep going together',
   hint: 'Turn this into something you two do now and then.',
-  reveal: 'We haven’t built this yet. Tell us what you’d want and we’ll use it to decide what to make next.',
+  reveal: 'This isn’t built yet. Your tap counts as a vote for building it. What would you want most?',
+  // Matches Phase 2 in the proposal deck: strip shelf, shared streak, nudges at term breaks.
   options: [
-    { id: 'weekly-prompt', label: 'A new prompt for us each week' },
-    { id: 'shared-album', label: 'A shared album of our strips' },
-    { id: 'nudges', label: 'Gentle reminders to keep chatting' },
+    { id: 'shelf', label: 'A shelf of all our strips' },
+    { id: 'streak', label: 'A shared streak for things we do together' },
+    { id: 'term-nudge', label: 'A check-in nudge at term breaks' },
     { id: 'other', label: 'Something else' },
   ],
   thanks: 'Thanks, that helps. Nothing else is needed from you.',

@@ -66,9 +66,14 @@ No build step and no dependencies. GitHub Pages serves the files as they are.
 ## Live two-person mode (Supabase)
 
 - Off by default until go-live. Turn it on for a browser with `?live` on the address (for example `https://greengolbin.github.io/reframe/?live`); `?demo` turns it off again. Friend links (`#/j/…`) and return links (`#/r/…`) always open live mode. To launch for everyone, set `LIVE_BY_DEFAULT = true` in `js/config.js`.
-- Database: `supabase/migrations/001_init.sql` (tables, access rules, functions, private photo bucket) and `002_kpi_and_ping.sql` (KPI views, ping). All access is through functions; the browser never reads tables directly.
+- Database: `supabase/migrations/001_init.sql` (tables, access rules, functions, private photo bucket), `002_kpi_and_ping.sql` (ping) and `003_deck_kpis.sql` (link cap, KPI views matching the proposal deck). All access is through functions; the browser never reads tables directly.
+- Each invite or return link opens in at most 3 browsers per person (for example Instagram's in-app browser, Safari and Chrome). After that it shows "this link has been used".
+- A strip only finishes with a photo of the pair, as in the deck.
 - Sign-in: Supabase anonymous sign-ins with a Cloudflare Turnstile check. The secret link tokens are the real credentials and are stored hashed.
-- KPI views (run in the Supabase SQL editor): `select * from private.kpi_summary;` `select * from private.kpi_door;` `select * from private.door_choices;`
-- Booth tag: share `https://greengolbin.github.io/reframe/?ref=booth` on booth materials; the first tag seen on a device is kept.
+- KPI views (run in the Supabase SQL editor). They cover the deck's window, 30 Nov 2026 to 24 Jan 2027, and still count strips people delete (only a random stand-in id is kept):
+  - `select * from private.kpi_deck;` every re:frame KPI from the deck with its target, result and whether it is met
+  - `select * from private.kpi_by_source;` visits, strips, invites and finished strips per source tag
+  - `select * from private.kpi_door;` and `select * from private.door_choices;` the "Keep going together" detail
+- Source tags: add `?ref=` to every link you control. Use `booth` on the take-home card QR, `boost3` and `boost7` on the two website boosts, `bio` on the Instagram and TikTok bio links. A visit is counted once per tag per day per browser, with no identifiers. The first tag a browser sees is saved onto the strips it starts; people who arrive from a friend's link are tagged `invite`. Team testing: open the site once with `?ref=test` on each test phone first, so test strips are left out of the KPIs.
 - Keep-alive: `.github/workflows/keepalive.yml` pings the database twice a week so the free project does not pause.
 - `js/vendor/supabase.js` is a bundled copy of `@supabase/supabase-js` 2.119.2.

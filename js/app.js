@@ -113,7 +113,7 @@ function frame({ who, stage, text, photo, isNew, plan }) {
   const inner = plan
     ? `<div class="inner plan"><span class="tag">the plan</span><span class="subheading">${esc(plan.idea)}</span><span class="small muted">${esc(plan.time)}</span></div>`
     : photo
-      ? `<div class="inner"><img src="${photo}" alt="${esc(who)}’s photo"></div>`
+      ? `<div class="inner"><img src="${esc(photo)}" alt="${esc(who)}’s photo"></div>`
       : `<div class="inner">${esc(text || '')}</div>`;
   return `<figure class="frame ${isNew ? 'new' : ''}">${inner}<figcaption>${esc(stage)} · ${esc(who)}</figcaption></figure>`;
 }
@@ -175,7 +175,7 @@ async function start() {
   shell({
     title: 'start a photostrip', back: '#/',
     body: `<div class="stack-sm" style="gap:2px"><h1 class="heading">who’ve you been meaning to text?</h1>
-      <p class="body muted" style="margin:0">First names are enough. No sign-up needed.</p></div>
+      <p class="body muted" style="margin:0">First names are enough. No sign-up needed.${LIVE ? ' Only you two see the strip. <a href="#/about">What we keep</a>' : ''}</p></div>
       <form id="start-form" class="stack-sm" style="gap:14px" novalidate>
         <div class="two-col">
           <div class="field"><label class="label" for="friend">Their name</label>
@@ -307,7 +307,9 @@ async function sent(id) {
         : `<a class="btn btn-tertiary" href="#/s/${id}/friend">Preview what ${esc(s.friendName)} sees</a>`}`,
   });
   $('#copy-link')?.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(linkTo(id)); toast('Link copied.'); } catch { toast('Couldn’t copy. Open the invite screen to share it again.'); }
+    const link = linkTo(id);
+    if (!link) return toast('This browser doesn’t have the invite link. Copy it from the phone you started on.');
+    try { await navigator.clipboard.writeText(link); toast('Link copied.'); } catch { toast('Couldn’t copy. Open the invite screen to share it again.'); }
   });
 }
 
@@ -510,9 +512,17 @@ async function nextStage(s, signal) {
     e.preventDefault();
     const f = new FormData(e.target);
     const idea = ideas.find((i) => i.id === f.get('idea'));
-    await store.saveTurn(id, 'next', 'me', { ideaId: idea.id, idea: idea.title, time: f.get('time') });
-    await store.updateStrip(id, { stage: 'next' });
-    go(`#/s/${id}/wait/next`);
+    const btn = $('.actions .btn-primary');
+    btn.disabled = true;
+    try {
+      await store.saveTurn(id, 'next', 'me', { ideaId: idea.id, idea: idea.title, time: f.get('time') });
+      await store.updateStrip(id, { stage: 'next' });
+      go(`#/s/${id}/wait/next`);
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false;
+      toast(saveError(err));
+    }
   });
 }
 
@@ -632,29 +642,35 @@ async function meetupView(id) {
         <label class="btn btn-secondary file-label" style="width:auto">${icon.camera}<span id="photo-btn">${photo ? 'Change photo' : 'Add a photo'}</span><input type="file" id="photo" accept="image/*"></label></div>
       <div class="field"><label class="label" for="cap">Caption <span class="muted">(optional)</span></label>
         <input class="input" id="cap" maxlength="28" placeholder="e.g. badminton + supper" value="${esc(s.turns.meetup?.caption || '')}"></div>
-      ${tip('enc', 'that’s a new memory. one tap and your strip is done.')}`,
+      ${tip('enc', 'one photo of you two together finishes the strip.')}`,
     actions: `<button class="btn btn-primary" id="finish">Finish our photostrip</button>
-      <button class="btn btn-tertiary" id="skip">No photo, use our plan instead</button>`,
+      <a class="btn btn-tertiary" href="#/strips">We haven’t met up yet</a>`,
   });
   $('#photo').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    photo = await compressImage(file);
-    $('#thumb').src = photo;
-    $('#thumb').hidden = false;
-    $('#photo-btn').textContent = 'Change photo';
-  });
-  const finish = async (withPhoto) => {
     try {
-      await store.updateStrip(id, { stage: 'done', turns: { meetup: { photo: withPhoto ? photo : null, caption: $('#cap').value.trim() } } });
+      photo = await compressImage(file);
+      $('#thumb').src = photo;
+      $('#thumb').hidden = false;
+      $('#photo-btn').textContent = 'Change photo';
+    } catch {
+      toast('That photo couldn’t be opened. Try another one.');
+    }
+  });
+  const finish = async () => {
+    const btn = $('#finish');
+    btn.disabled = true;
+    try {
+      await store.updateStrip(id, { stage: 'done', turns: { meetup: { photo, caption: $('#cap').value.trim() } } });
       go(`#/s/${id}/done`);
     } catch (e) {
       console.error(e);
+      btn.disabled = false;
       toast(saveError(e));
     }
   };
-  $('#finish').addEventListener('click', () => (photo ? finish(true) : (toast('Add a photo first, or tap the option below.'), $('#photo').click())));
-  $('#skip').addEventListener('click', () => finish(false));
+  $('#finish').addEventListener('click', () => (photo ? finish() : (toast('Add a photo of you two first.'), $('#photo').click())));
 }
 
 /* ---------------- 09 done ---------------- */
@@ -879,6 +895,8 @@ async function claimView(token, signal, kind) {
     const code = e?.code || e?.message || '';
     if (/own_link/.test(code)) {
       shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">that’s your own link</h1><p class="muted" style="margin:0">This link is for your friend. Send it to them, and open your own photostrip from the home screen.</p>`, actions: `<a class="btn btn-primary" href="#/strips">My photostrips</a>` });
+    } else if (/link_used/.test(code)) {
+      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link has been used</h1><p class="muted" style="margin:0">This photostrip is already open on other phones or browsers, so it can’t be opened here. If it’s yours, use the phone or browser you started on.</p>${tip('ovr', 'want your own? starting one takes a minute.')}`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
     } else if (/invalid_token/.test(code)) {
       shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link isn’t working</h1><p class="muted" style="margin:0">It may have been typed wrong, cut off, or the photostrip was deleted. Ask your friend to send it again.</p>${tip('ovr', 'no stress. links get cut off sometimes.')}`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
     } else showError(e, () => claimView(token, signal, kind));

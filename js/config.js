@@ -23,6 +23,8 @@ export const config = {
   supabasePublishableKey: 'sb_publishable_uuqYyyHWo2zojpRhZX3A6A_Y8ibZTH2',
   turnstileSiteKey: '0x4AAAAAAGNISv4DiZSYAfSL',
   live: resolveLive(),
-  // Fake door threshold agreed before launch: share of finished strips that tap "Keep going together".
-  doorThreshold: 0.05,
+  // Fake door target from the proposal deck: "Keep going together" tapped on 15% or more of
+  // finished strips, and at least 3 taps. The KPI view private.kpi_deck checks both.
+  doorThreshold: 0.15,
+  doorMinTaps: 3,
 };
