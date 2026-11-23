@@ -66,17 +66,42 @@ const icon = {
   check: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="20" height="20"><circle cx="12" cy="12" r="11" fill="#69455B"/><path d="m7.5 12.5 3 3 6-6.5" stroke="#FFF6E9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  tick: '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true" width="18" height="18"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="m6 10.5 2.6 2.6L14 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
   camera: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" stroke="currentColor" stroke-width="1.8"/></svg>',
 };
 
-function toast(msg) {
+function toast(msg, { ok = false } = {}) {
   document.querySelector('.toast')?.remove();
   const t = document.createElement('div');
-  t.className = 'toast';
+  t.className = `toast${ok ? ' toast-ok' : ''}`;
   t.setAttribute('role', 'status');
-  t.textContent = msg;
+  t.innerHTML = `${ok ? icon.tick : ''}<span>${esc(msg)}</span>`;
   document.body.append(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), ok ? 3500 : 3000);
+}
+
+// Instagram, Facebook, TikTok etc. open links in their own browser, which can't download files.
+const IN_APP = /Instagram|FBAN|FBAV|FB_IAB|musical_ly|BytedanceWebview|TikTok|Snapchat|LinkedInApp|Line\//i.test(navigator.userAgent);
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+
+// In-page sheet for saving the strip where the browser can't save files directly.
+function saveSheet(src, { story = false } = {}) {
+  document.querySelector('dialog.sheet')?.remove();
+  const hold = IOS ? 'Tap <b>Save to Photos</b>.' : 'Tap <b>Download image</b>.';
+  const d = document.createElement('dialog');
+  d.className = 'sheet';
+  d.setAttribute('aria-labelledby', 'sheet-title');
+  d.innerHTML = `<div class="sheet-head"><h2 id="sheet-title" class="h2">${story ? 'Save it, then post it' : 'Save your strip'}</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Close">${icon.close}</button></div>
+    <img class="sheet-img" src="${src}" alt="Your photostrip">
+    <ol class="sheet-steps"><li>Press and hold the strip above.</li><li>${hold}</li>${story ? `<li>Open Instagram and add it to your Story with ${esc(site.hashtag)}.</li>` : ''}</ol>
+    <button class="btn btn-primary" type="button" data-close>Done</button>`;
+  document.body.append(d);
+  d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
+  d.addEventListener('close', () => d.remove());
+  d.showModal();
 }
 
 function shell({ title, back, body, actions = '', docTitle }) {
@@ -745,39 +770,45 @@ async function doneView(id, signal) {
   }
   const url = URL.createObjectURL(blob);
   $('.strip-preview').innerHTML = `<img src="${url}" alt="Your photostrip with ${esc(them)}: now, then and next frames">`;
-  if (matchMedia('(pointer: coarse)').matches) $('.strip-preview').insertAdjacentHTML('afterend', '<p class="caption muted" style="margin:0;text-align:center">To save it to Photos, press and hold the strip, or tap Save image and choose Save Image.</p>');
   ready = true;
   $('#download').disabled = false;
   sync();
   const fname = `reframe-photostrip-${them.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
+  // A data: URL survives press-and-hold saving in in-app browsers better than a blob: URL.
+  const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
+  const file = new File([blob], fname, { type: 'image/png' });
+  const canShareFile = () => { try { return !!navigator.canShare?.({ files: [file] }); } catch { return false; } };
   const download = () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = fname;
     a.click();
   };
-  // On phones a plain download goes to Files (or nowhere, in in-app browsers like Instagram).
-  // The share sheet has "Save Image", which puts it in Photos, so use that when it's offered.
-  $('#download').addEventListener('click', async () => {
-    store.logEvent?.('download_image', id);
-    const file = new File([blob], fname, { type: 'image/png' });
-    if (navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') toast('Press and hold the strip, then tap Save to Photos.'); }
-      return;
+  // Phones: the share sheet's "Save Image" puts it in Photos. In-app browsers and phones
+  // without that get an in-page sheet (press and hold). Computers download the file.
+  const save = async ({ story = false } = {}) => {
+    if (canShareFile()) {
+      try {
+        await navigator.share(story ? { files: [file], text: `${site.hashtag} we picked up where we left off.` } : { files: [file] });
+        toast(story ? 'Done. Post it to your Story when you’re ready.' : 'Done. If you tapped Save Image, it’s in Photos.', { ok: true });
+        return 'share';
+      } catch (e) {
+        if (e.name === 'AbortError') return 'cancelled';
+      }
     }
+    if (TOUCH || IN_APP) { saveSheet(dataUrl, { story }); return 'sheet'; }
     download();
-    toast('Saved to your downloads. Or press and hold the strip to save it to Photos.');
+    toast(story ? `Saved to your Downloads folder. Post it to your Story with ${site.hashtag}.` : 'Saved to your Downloads folder.', { ok: true });
+    return 'download';
+  };
+  $('#download').addEventListener('click', async () => {
+    const method = await save();
+    store.logEvent?.('download_image', id, { method });
   });
   $('#share').addEventListener('click', async () => {
     if (!canShare()) return;
-    store.logEvent?.('share_story', id);
-    const file = new File([blob], fname, { type: 'image/png' });
-    if (navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file], text: `${site.hashtag} we picked up where we left off.` }); } catch {}
-    } else {
-      download();
-      toast(`Saved. Post it to your Story with ${site.hashtag}.`);
-    }
+    const method = await save({ story: true });
+    store.logEvent?.('share_story', id, { method });
   });
   $('#again')?.addEventListener('click', () => {
     sessionStorage.setItem('reconnect.prefill', JSON.stringify({ friendName: s.friendName, gap: 'months', place: s.place }));
