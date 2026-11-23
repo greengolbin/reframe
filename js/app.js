@@ -745,6 +745,7 @@ async function doneView(id, signal) {
   }
   const url = URL.createObjectURL(blob);
   $('.strip-preview').innerHTML = `<img src="${url}" alt="Your photostrip with ${esc(them)}: now, then and next frames">`;
+  if (matchMedia('(pointer: coarse)').matches) $('.strip-preview').insertAdjacentHTML('afterend', '<p class="caption muted" style="margin:0;text-align:center">To save it to Photos, press and hold the strip, or tap Save image and choose Save Image.</p>');
   ready = true;
   $('#download').disabled = false;
   sync();
@@ -755,7 +756,18 @@ async function doneView(id, signal) {
     a.download = fname;
     a.click();
   };
-  $('#download').addEventListener('click', () => { download(); store.logEvent?.('download_image', id); toast('Saved to your downloads.'); });
+  // On phones a plain download goes to Files (or nowhere, in in-app browsers like Instagram).
+  // The share sheet has "Save Image", which puts it in Photos, so use that when it's offered.
+  $('#download').addEventListener('click', async () => {
+    store.logEvent?.('download_image', id);
+    const file = new File([blob], fname, { type: 'image/png' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') toast('Press and hold the strip, then tap Save to Photos.'); }
+      return;
+    }
+    download();
+    toast('Saved to your downloads. Or press and hold the strip to save it to Photos.');
+  });
   $('#share').addEventListener('click', async () => {
     if (!canShare()) return;
     store.logEvent?.('share_story', id);
