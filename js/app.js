@@ -1,5 +1,6 @@
 import { site, stats, gapOptions, placeOptions, openers, stages, formats, ideas, times, faq, faqCats, door } from './content.js';
 import { store, MODE } from './store.js';
+import { config } from './config.js';
 import { renderPhotostrip } from './photostrip.js';
 
 const view = document.getElementById('app');
@@ -51,7 +52,7 @@ function showError(e, retry) {
   else if (/Failed to fetch|NetworkError|Load failed/i.test(String(e?.message))) msg = 'We couldn’t reach the server. Check your connection and try again.';
   shell({
     title: 'photostrip', back: '#/',
-    body: `<h1 class="heading">that didn’t work</h1><p class="muted" style="margin:0">${esc(msg)}</p>${tip('ovr', 'your photostrip is safe. nothing was lost.')}`,
+    body: `<h1 class="heading">that didn’t work</h1><p class="muted" style="margin:0">${esc(msg)}</p>${tip('ovr', 'your photostrip is safe. nothing was lost.')}<p class="small muted" style="margin:0">Still stuck? ${reportLink('Tell us what happened')}.</p>`,
     actions: `<button class="btn btn-primary" id="retry">Try again</button><a class="btn btn-tertiary" href="#/">Back to home</a>`,
   });
   $('#retry').addEventListener('click', retry || (() => render()));
@@ -103,6 +104,86 @@ function saveSheet(src, { story = false } = {}) {
   d.addEventListener('close', () => d.remove());
   d.showModal();
 }
+
+// ---------------- "Something not working?" report ----------------
+// Works in demo and live mode, signed in or not: one plain call, no Supabase client needed.
+// Sends the note plus the screen (ids and link codes removed), device type, OS, browser, mode
+// and source tag. No names, no contact details (the server strips emails and phone numbers too).
+const REPORTS_KEY = 'reframe.reports';
+const reportLink = (text = 'Something not working?') => `<a href="#" data-report>${esc(text)}</a>`;
+function clientInfo() {
+  const ua = navigator.userAgent;
+  const browser = /Instagram/i.test(ua) ? 'instagram' : /FBAN|FBAV|FB_IAB/i.test(ua) ? 'facebook'
+    : /musical_ly|BytedanceWebview|TikTok/i.test(ua) ? 'tiktok' : /Snapchat/i.test(ua) ? 'snapchat'
+    : /LinkedInApp/i.test(ua) ? 'linkedin' : /Line\//i.test(ua) ? 'line' : /Telegram/i.test(ua) ? 'telegram'
+    : /SamsungBrowser/i.test(ua) ? 'samsung' : /Edg\//i.test(ua) ? 'edge' : /Firefox|FxiOS/i.test(ua) ? 'firefox'
+    : /CriOS|Chrome\//i.test(ua) ? 'chrome' : /Safari\//i.test(ua) ? 'safari' : 'other';
+  const os = IOS ? 'ios' : /Android/i.test(ua) ? 'android' : /Windows/i.test(ua) ? 'windows' : /Macintosh|Mac OS X/i.test(ua) ? 'mac' : 'other';
+  const device = /iPad|Tablet/i.test(ua) || (IOS && !/iPhone|iPod/.test(ua)) || (/Android/i.test(ua) && !/Mobile/i.test(ua)) ? 'tablet' : TOUCH || /Mobi/i.test(ua) ? 'phone' : 'computer';
+  let ref = null;
+  try { ref = localStorage.getItem('reframe.ref'); } catch { /* blocked */ }
+  return { device, os, browser, ref };
+}
+function recentReports() {
+  try { return JSON.parse(localStorage.getItem(REPORTS_KEY) || '[]').filter((t) => Date.now() - t < 3600e3); } catch { return []; }
+}
+async function sendReport(note) {
+  const { device, os, browser, ref } = clientInfo();
+  const screen = (location.hash || '#/').replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, ':id').replace(/\/(j|r)\/[\w-]+/, '/$1/:link').slice(0, 60);
+  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/report_problem`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: config.supabasePublishableKey },
+    body: JSON.stringify({ p_note: note, p_screen: screen, p_device: device, p_os: os, p_browser: browser, p_mode: MODE === 'demo' ? 'demo' : 'live', p_ref: ref }),
+  });
+  if (!res.ok) throw new Error(/rate_limited/.test(await res.text().catch(() => '')) ? 'rate_limited' : `http_${res.status}`);
+  try { localStorage.setItem(REPORTS_KEY, JSON.stringify([...recentReports(), Date.now()])); } catch { /* blocked */ }
+}
+function reportSheet(opener) {
+  document.querySelector('dialog.sheet')?.remove();
+  const d = document.createElement('dialog');
+  d.className = 'sheet';
+  d.setAttribute('aria-labelledby', 'sheet-title');
+  d.innerHTML = `<div class="sheet-head"><h2 id="sheet-title" class="h2">Something not working?</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Close">${icon.close}</button></div>
+    <form class="stack-sm" style="gap:10px" novalidate>
+      <label class="label" for="report-note">What went wrong?</label>
+      <textarea class="textarea" id="report-note" maxlength="500" rows="4" aria-describedby="report-hint report-err" placeholder="For example: I tapped Save image and nothing happened."></textarea>
+      <p class="caption muted" id="report-hint" style="margin:0;text-transform:none;letter-spacing:0">Please don’t include names or contact details. We also get which screen you were on and your type of phone and browser, nothing else.</p>
+      <p class="error" id="report-err" role="alert"></p>
+      <button class="btn btn-primary" type="submit">Send</button>
+    </form>`;
+  document.body.append(d);
+  const form = d.querySelector('form');
+  const note = d.querySelector('#report-note');
+  const err = d.querySelector('#report-err');
+  const btn = form.querySelector('[type=submit]');
+  d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
+  d.addEventListener('close', () => { d.remove(); opener?.focus?.(); });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = note.value.trim();
+    err.textContent = '';
+    if (text.length < 3) { err.textContent = 'Tell us a little about what happened.'; note.focus(); return; }
+    if (recentReports().length >= 3) { err.textContent = 'You’ve sent a few already. Thanks, we’re looking into them.'; return; }
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      await sendReport(text);
+      d.close();
+      toast('Thanks. We got it.', { ok: true });
+    } catch (ex) {
+      btn.disabled = false; btn.textContent = 'Send';
+      err.textContent = ex.message === 'rate_limited' ? 'Lots of reports right now. Try again in a few minutes.' : 'Couldn’t send. Check your connection and try again.';
+    }
+  });
+  d.showModal();
+  note.focus();
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-report]');
+  if (!a) return;
+  e.preventDefault();
+  reportSheet(a);
+});
 
 function shell({ title, back, body, actions = '', docTitle }) {
   document.title = `${docTitle || title || site.tool} · ${site.campaign}`;
@@ -188,7 +269,7 @@ async function landing() {
       ${resumeRow}`,
     actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>
       <a class="btn btn-tertiary" href="#/faq">Not ready? Read the reconnecting tips</a>
-      <p class="footer-note">Student prototype, not an official MSF service. <a href="#/about">About</a></p>`,
+      <p class="footer-note">Student prototype, not an official MSF service. <a href="#/about">About</a> · ${reportLink('Report a problem')}</p>`,
   });
 }
 
@@ -765,7 +846,7 @@ async function doneView(id, signal) {
     blob = await renderPhotostrip(s, { logo: ASSETS.logoFull, hashtag: site.hashtag });
   } catch (e) {
     console.error(e);
-    $('#rendering').textContent = 'Couldn’t draw the strip on this browser.';
+    $('#rendering').innerHTML = `Couldn’t draw the strip on this browser. ${reportLink('Tell us')}.`;
     return;
   }
   const url = URL.createObjectURL(blob);
@@ -891,7 +972,7 @@ async function aboutView() {
       <p class="body" style="margin:0">${esc(site.disclaimer)}</p>
       ${LIVE ? `
       <div class="card stack-sm"><h2 class="subheading">What we keep</h2>
-        <p class="small muted" style="margin:0">Names you type, your words, your photos, and simple counts like “link opened” so we can see if the pilot works. No accounts, no contact details, no tracking of what you do elsewhere.</p></div>
+        <p class="small muted" style="margin:0">Names you type, your words, your photos, simple counts like “link opened” so we can see if the pilot works, and any problem reports you send. No accounts, no contact details, no tracking of what you do elsewhere.</p></div>
       <div class="card stack-sm"><h2 class="subheading">Who can see it</h2>
         <p class="small muted" style="margin:0">Only the two of you, through your private links. Nothing is posted anywhere unless you both say yes on the finished strip. Photos are stored privately and shown through short-lived links.</p></div>
       <div class="card stack-sm"><h2 class="subheading">How long</h2>
@@ -902,8 +983,10 @@ async function aboutView() {
       <button class="btn btn-tertiary" id="forget" type="button">Sign out of this browser</button>`
       : `
       <div class="card stack-sm"><h2 class="subheading">Demo mode</h2>
-        <p class="small muted" style="margin:0">Everything you type and any photos you add stay in this browser on this device. Nothing is sent to a server, and your friend’s side is simulated so you can try the full journey on your own.</p></div>
-      <button class="btn btn-secondary" id="reset">Clear demo data on this device</button>`}`,
+        <p class="small muted" style="margin:0">Everything you type and any photos you add stay in this browser on this device. Nothing is sent to a server unless you send us a problem report, and your friend’s side is simulated so you can try the full journey on your own.</p></div>
+      <button class="btn btn-secondary" id="reset">Clear demo data on this device</button>`}
+      <div class="card stack-sm"><h2 class="subheading">Something not working?</h2>
+        <p class="small muted" style="margin:0">Tell us what happened and we’ll look into it. ${reportLink('Report a problem')}</p></div>`,
   });
   $('#reset')?.addEventListener('click', async () => {
     if (!confirm('Delete all demo photostrips on this device?')) return;
@@ -940,9 +1023,9 @@ async function claimView(token, signal, kind) {
     if (/own_link/.test(code)) {
       shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">that’s your own link</h1><p class="muted" style="margin:0">This link is for your friend. Send it to them, and open your own photostrip from the home screen.</p>`, actions: `<a class="btn btn-primary" href="#/strips">My photostrips</a>` });
     } else if (/link_used/.test(code)) {
-      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link has been used</h1><p class="muted" style="margin:0">This photostrip is already open on other phones or browsers, so it can’t be opened here. If it’s yours, use the phone or browser you started on.</p>${tip('ovr', 'want your own? starting one takes a minute.')}`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
+      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link has been used</h1><p class="muted" style="margin:0">This photostrip is already open on other phones or browsers, so it can’t be opened here. If it’s yours, use the phone or browser you started on.</p>${tip('ovr', 'want your own? starting one takes a minute.')}<p class="small muted" style="margin:0">Think this is a mistake? ${reportLink('Tell us')}.</p>`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
     } else if (/invalid_token/.test(code)) {
-      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link isn’t working</h1><p class="muted" style="margin:0">It may have been typed wrong, cut off, or the photostrip was deleted. Ask your friend to send it again.</p>${tip('ovr', 'no stress. links get cut off sometimes.')}`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
+      shell({ title: 'photostrip', back: '#/', body: `<h1 class="heading">this link isn’t working</h1><p class="muted" style="margin:0">It may have been typed wrong, cut off, or the photostrip was deleted. Ask your friend to send it again.</p>${tip('ovr', 'no stress. links get cut off sometimes.')}<p class="small muted" style="margin:0">Think this is a mistake? ${reportLink('Tell us')}.</p>`, actions: `<a class="btn btn-primary" href="#/start">Start a photostrip</a>` });
     } else showError(e, () => claimView(token, signal, kind));
   }
 }

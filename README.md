@@ -66,7 +66,7 @@ No build step and no dependencies. GitHub Pages serves the files as they are.
 ## Live two-person mode (Supabase)
 
 - Off by default until go-live. Turn it on for a browser with `?live` on the address (for example `https://greengolbin.github.io/reframe/?live`); `?demo` turns it off again. Friend links (`#/j/…`) and return links (`#/r/…`) always open live mode. To launch for everyone, set `LIVE_BY_DEFAULT = true` in `js/config.js`.
-- Database: `supabase/migrations/001_init.sql` (tables, access rules, functions, private photo bucket), `002_kpi_and_ping.sql` (ping) and `003_deck_kpis.sql` (link cap, KPI views matching the proposal deck). All access is through functions; the browser never reads tables directly.
+- Database: `supabase/migrations/001_init.sql` (tables, access rules, functions, private photo bucket), `002_kpi_and_ping.sql` (ping), `003_deck_kpis.sql` (link cap, KPI views matching the proposal deck) and `004_problem_reports.sql` (problem reports). All access is through functions; the browser never reads tables directly.
 - Each invite or return link opens in at most 3 browsers per person (for example Instagram's in-app browser, Safari and Chrome). After that it shows "this link has been used".
 - A strip only finishes with a photo of the pair, as in the deck.
 - Sign-in: Supabase anonymous sign-ins with a Cloudflare Turnstile check. The secret link tokens are the real credentials and are stored hashed.
@@ -74,6 +74,7 @@ No build step and no dependencies. GitHub Pages serves the files as they are.
   - `select * from private.kpi_deck;` every re:frame KPI from the deck with its target, result and whether it is met
   - `select * from private.kpi_by_source;` visits, strips, invites and finished strips per source tag
   - `select * from private.kpi_door;` and `select * from private.door_choices;` the "Keep going together" detail
+- Problem reports: "Report a problem" in the landing footer and on the About page, and "Tell us what happened" on error screens, open a short form. It works in demo and live mode. Each report keeps the note (emails and phone numbers are stripped), the screen with ids and link codes removed, phone/tablet/computer, OS, browser (including Instagram and other in-app browsers), mode and source tag. Limits: 3 per browser per hour, 30 per 10 minutes and 300 per day overall. Read them with `select * from private.reports where status = 'new' order by created_at desc;` and mark one handled with `update private.reports set status = 'fixed' where id = …;` (or `wontfix`, `duplicate`).
 - Source tags: add `?ref=` to every link you control. Use `booth` on the take-home card QR, `boost3` and `boost7` on the two website boosts, `bio` on the Instagram and TikTok bio links. A visit is counted once per tag per day per browser, with no identifiers. The first tag a browser sees is saved onto the strips it starts; people who arrive from a friend's link are tagged `invite`. Team testing: open the site once with `?ref=test` on each test phone first, so test strips are left out of the KPIs.
 - Keep-alive: `.github/workflows/keepalive.yml` pings the database twice a week so the free project does not pause.
 - `js/vendor/supabase.js` is a bundled copy of `@supabase/supabase-js` 2.119.2.

@@ -348,3 +348,6 @@ dialog.sheet::backdrop { background: rgba(40, 24, 34, .55); }
 .sheet-steps { margin: 0; padding-left: 22px; font: 400 15px/22px var(--font-body); }
 .sheet-steps li + li { margin-top: 2px; }
 @media (min-width: 560px) { dialog.sheet { margin: auto; border-radius: 20px; } }
+dialog.sheet .textarea { min-height: 96px; }
+#report-err:empty { display: none; }
+.footer-note a { white-space: nowrap; }
