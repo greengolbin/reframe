@@ -351,3 +351,5 @@ dialog.sheet::backdrop { background: rgba(40, 24, 34, .55); }
 dialog.sheet .textarea { min-height: 96px; }
 #report-err:empty { display: none; }
 .footer-note a { white-space: nowrap; }
+.icon-btn-quiet { color: var(--text-muted); }
+.icon-btn-quiet svg { width: 22px; height: 22px; }

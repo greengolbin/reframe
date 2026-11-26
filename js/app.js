@@ -67,6 +67,7 @@ const icon = {
   check: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="20" height="20"><circle cx="12" cy="12" r="11" fill="#69455B"/><path d="m7.5 12.5 3 3 6-6.5" stroke="#FFF6E9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 21V4m0 0h10.5l-2 4 2 4H6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   tick: '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true" width="18" height="18"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="m6 10.5 2.6 2.6L14 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
   camera: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" stroke="currentColor" stroke-width="1.8"/></svg>',
@@ -190,7 +191,8 @@ function shell({ title, back, body, actions = '', docTitle }) {
   const header = title || back
     ? `<header class="topbar">
         ${back ? `<a class="icon-btn" href="${back}" aria-label="Back">${icon.back}</a>` : '<span></span>'}
-        <p class="title">${esc(title || '')}</p><span></span>
+        <p class="title">${esc(title || '')}</p>
+        <button class="icon-btn icon-btn-quiet" type="button" data-report aria-label="Report a problem" title="Report a problem">${icon.flag}</button>
       </header>`
     : '';
   view.innerHTML = `${header}
@@ -442,7 +444,7 @@ async function friendView(id) {
         <figure class="polaroid tilt-r" style="margin:0"><div class="ph empty">+</div><figcaption>next</figcaption></figure></div>
       ${asFriend ? `<div class="field"><label class="label" for="my-name">Your name on the strip</label>
         <input class="input" id="my-name" maxlength="30" autocomplete="given-name" value="${esc(s.myName || '')}"></div>
-        <p class="small muted" style="margin:0">Only you two can see this strip. You can delete it any time from <a href="#/about">About</a>.</p>`
+        <p class="small muted" style="margin:0">Only you two can see this strip. You can delete it any time from <a href="#/about">About</a>. ${reportLink('Report a problem')}</p>`
         : tip('enc', 'they started a photostrip for you two. just add one thing back.')}`,
     actions: `<button class="btn btn-primary" id="add-part" type="button">Add my part</button>
       <a class="btn btn-tertiary" href="${asFriend ? '#/' : `#/s/${id}`}">${asFriend ? 'Maybe later (they won’t be told)' : 'Back to my side (demo)'}</a>`,
